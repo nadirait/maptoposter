@@ -14,7 +14,7 @@ FONTS_DIR = "fonts"
 FONTS_CACHE_DIR = Path(FONTS_DIR) / "cache"
 
 
-def download_google_font(font_family: str, weights: list = None) -> Optional[dict]:
+def download_google_font(font_family: str, weights: list = None, api_key: str = None) -> Optional[dict]:
     """
     Download a font family from Google Fonts and cache it locally.
     Returns dict with font paths for different weights, or None if download fails.
@@ -134,20 +134,21 @@ def download_google_font(font_family: str, weights: list = None) -> Optional[dic
         return None
 
 
-def load_fonts(font_family: Optional[str] = None) -> Optional[dict]:
+def load_fonts(font_family: Optional[str] = None, api_key: Optional[str] = None) -> Optional[dict]:
     """
     Load fonts from local directory or download from Google Fonts.
     Returns dict with font paths for different weights.
 
     :param font_family: Google Fonts family name (e.g., 'Noto Sans JP', 'Open Sans').
                        If None, uses local Roboto fonts.
+    :param api_key: Optional Google Fonts API key for higher-rate-limit requests.
     :return: Dict with 'bold', 'regular', 'light' keys mapping to font file paths,
              or None if all loading methods fail
     """
     # If custom font family specified, try to download from Google Fonts
     if font_family and font_family.lower() != "roboto":
         print(f"Loading Google Font: {font_family}")
-        fonts = download_google_font(font_family)
+        fonts = download_google_font(font_family, api_key=api_key)
         if fonts:
             print(f"✓ Font '{font_family}' loaded successfully")
             return fonts

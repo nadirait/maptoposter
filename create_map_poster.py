@@ -50,6 +50,50 @@ FILE_ENCODING = "utf-8"
 FONTS = load_fonts()
 
 
+# ── Coordinate formatters ─────────────────────────────────────────────────────
+
+def _dd_to_dms(deg: float) -> tuple[int, int, float]:
+    """Convert decimal degrees to (degrees, minutes, seconds)."""
+    d = int(deg)
+    rem = (deg - d) * 60
+    m = int(rem)
+    s = (rem - m) * 60
+    return d, m, s
+
+
+def _format_coords(lat: float, lon: float, fmt: str) -> str:
+    """
+    Format a lat/lon pair for display on the poster.
+
+    :param lat: Latitude in decimal degrees
+    :param lon: Longitude in decimal degrees
+    :param fmt: "off" | "dd" | "dms" | "ddm"
+    :return: Formatted string, or empty string when fmt == "off"
+    """
+    if fmt == "off":
+        return ""
+    lat_dir = "N" if lat >= 0 else "S"
+    lon_dir = "E" if lon >= 0 else "W"
+    a_lat, a_lon = abs(lat), abs(lon)
+
+    if fmt == "dms":
+        ld, lm, ls = _dd_to_dms(a_lat)
+        od, om, os_ = _dd_to_dms(a_lon)
+        return (
+            f"{ld}\u00b0{lm:02d}'{ls:04.1f}\"{lat_dir}"
+            f"  /  "
+            f"{od}\u00b0{om:02d}'{os_:04.1f}\"{lon_dir}"
+        )
+    if fmt == "ddm":
+        ld = int(a_lat)
+        lm = (a_lat - ld) * 60
+        od = int(a_lon)
+        om = (a_lon - od) * 60
+        return f"{ld}\u00b0{lm:06.3f}' {lat_dir}  /  {od}\u00b0{om:06.3f}' {lon_dir}"
+    # Default: "dd" — decimal degrees
+    return f"{a_lat:.4f}\u00b0 {lat_dir}  /  {a_lon:.4f}\u00b0 {lon_dir}"
+
+
 def _cache_path(key: str) -> str:
     """
     Generate a safe cache file path from a cache key.
@@ -493,6 +537,14 @@ def create_poster(
     display_city=None,
     display_country=None,
     fonts=None,
+    fonts_city=None,
+    fonts_country=None,
+    fonts_coords=None,
+    size_city=None,
+    size_country=None,
+    size_coords=None,
+    show_attribution=True,
+    coord_format="dd",
 ):
     """
     Generate a complete map poster with roads, water, parks, and typography.
@@ -619,34 +671,27 @@ def create_poster(
     # This ensures text scales properly for both portrait and landscape orientations
     scale_factor = min(height, width) / 12.0
 
-    # Base font sizes (at 12 inches width)
-    base_main = 60
-    base_sub = 22
-    base_coords = 14
-    base_attr = 8
+    # Base font sizes at reference width (12 inches) — overridable per label
+    base_main   = size_city    if size_city    is not None else 60
+    base_sub    = size_country if size_country is not None else 22
+    base_coords = size_coords  if size_coords  is not None else 14
+    base_attr   = 8
 
-    # 4. Typography - use custom fonts if provided, otherwise use default FONTS
-    active_fonts = fonts or FONTS
-    if active_fonts:
-        # font_main is calculated dynamically later based on length
-        font_sub = FontProperties(
-            fname=active_fonts["light"], size=base_sub * scale_factor
-        )
-        font_coords = FontProperties(
-            fname=active_fonts["regular"], size=base_coords * scale_factor
-        )
-        font_attr = FontProperties(
-            fname=active_fonts["light"], size=base_attr * scale_factor
-        )
-    else:
-        # Fallback to system fonts
-        font_sub = FontProperties(
-            family="monospace", weight="normal", size=base_sub * scale_factor
-        )
-        font_coords = FontProperties(
-            family="monospace", size=base_coords * scale_factor
-        )
-        font_attr = FontProperties(family="monospace", size=base_attr * scale_factor)
+    # 4. Typography — per-label font support
+    # Priority: per-label font dict → shared fonts dict → module FONTS
+    _f_city    = fonts_city    or fonts or FONTS
+    _f_country = fonts_country or fonts or FONTS
+    _f_coords  = fonts_coords  or fonts or FONTS
+
+    def _fp(font_dict, weight, size):
+        """Build FontProperties from a {bold/regular/light} dict, falling back to monospace."""
+        if font_dict and weight in font_dict:
+            return FontProperties(fname=font_dict[weight], size=size)
+        return FontProperties(family="monospace", size=size)
+
+    font_sub    = _fp(_f_country, "light",   base_sub    * scale_factor)
+    font_coords = _fp(_f_coords,  "regular", base_coords * scale_factor)
+    font_attr   = _fp(_f_city,    "light",   base_attr)
 
     # Format city name based on script type
     # Latin scripts: apply uppercase and letter spacing for aesthetic
@@ -671,14 +716,7 @@ def create_poster(
     else:
         adjusted_font_size = base_adjusted_main
 
-    if active_fonts:
-        font_main_adjusted = FontProperties(
-            fname=active_fonts["bold"], size=adjusted_font_size
-        )
-    else:
-        font_main_adjusted = FontProperties(
-            family="monospace", weight="bold", size=adjusted_font_size
-        )
+    font_main_adjusted = _fp(_f_city, "bold", adjusted_font_size)
 
     # --- BOTTOM TEXT ---
     ax.text(
@@ -704,25 +742,19 @@ def create_poster(
     )
 
     lat, lon = point
-    coords = (
-        f"{lat:.4f}° N / {lon:.4f}° E"
-        if lat >= 0
-        else f"{abs(lat):.4f}° S / {lon:.4f}° E"
-    )
-    if lon < 0:
-        coords = coords.replace("E", "W")
-
-    ax.text(
-        0.5,
-        0.07,
-        coords,
-        transform=ax.transAxes,
-        color=THEME["text"],
-        alpha=0.7,
-        ha="center",
-        fontproperties=font_coords,
-        zorder=11,
-    )
+    coords_text = _format_coords(lat, lon, coord_format)
+    if coords_text:
+        ax.text(
+            0.5,
+            0.07,
+            coords_text,
+            transform=ax.transAxes,
+            color=THEME["text"],
+            alpha=0.7,
+            ha="center",
+            fontproperties=font_coords,
+            zorder=11,
+        )
 
     ax.plot(
         [0.4, 0.6],
@@ -734,23 +766,19 @@ def create_poster(
     )
 
     # --- ATTRIBUTION (bottom right) ---
-    if FONTS:
-        font_attr = FontProperties(fname=FONTS["light"], size=8)
-    else:
-        font_attr = FontProperties(family="monospace", size=8)
-
-    ax.text(
-        0.98,
-        0.02,
-        "© OpenStreetMap contributors",
-        transform=ax.transAxes,
-        color=THEME["text"],
-        alpha=0.5,
-        ha="right",
-        va="bottom",
-        fontproperties=font_attr,
-        zorder=11,
-    )
+    if show_attribution:
+        ax.text(
+            0.98,
+            0.02,
+            "© OpenStreetMap contributors",
+            transform=ax.transAxes,
+            color=THEME["text"],
+            alpha=0.5,
+            ha="right",
+            va="bottom",
+            fontproperties=font_attr,
+            zorder=11,
+        )
 
     # 5. Save
     print(f"Saving to {output_file}...")
