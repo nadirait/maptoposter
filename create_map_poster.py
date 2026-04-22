@@ -545,6 +545,7 @@ def create_poster(
     size_coords=None,
     show_attribution=True,
     coord_format="dd",
+    frame_style=None,
 ):
     """
     Generate a complete map poster with roads, water, parks, and typography.
@@ -779,6 +780,33 @@ def create_poster(
             fontproperties=font_attr,
             zorder=11,
         )
+
+    # 4b. Optional frame overlay
+    # Drawn after all map content so it sits on top (zorder 20).
+    # Frame width is expressed in physical inches so it looks uniform regardless
+    # of portrait vs. landscape orientation.
+    _FRAME_COLORS = {
+        "anthracite": "#2c2c2c",
+        "vanilla":    "#f5f0e8",
+    }
+    if frame_style and frame_style in _FRAME_COLORS:
+        import matplotlib.patches as _patches  # noqa: PLC0415
+        fc = _FRAME_COLORS[frame_style]
+        target_in = 0.35          # physical frame width in inches (uniform on all sides)
+        h_frac = target_in / width   # fraction of figure width
+        v_frac = target_in / height  # fraction of figure height
+        # Four edge strips: bottom, top, left, right
+        for (fx, fy, rw, rh) in [
+            (0,          0,          1,      v_frac),                    # bottom
+            (0,          1 - v_frac, 1,      v_frac),                    # top
+            (0,          v_frac,     h_frac, 1 - 2 * v_frac),            # left
+            (1 - h_frac, v_frac,     h_frac, 1 - 2 * v_frac),            # right
+        ]:
+            fig.add_artist(_patches.Rectangle(
+                (fx, fy), rw, rh,
+                transform=fig.transFigure, clip_on=False,
+                facecolor=fc, edgecolor="none", zorder=20,
+            ))
 
     # 5. Save
     print(f"Saving to {output_file}...")
