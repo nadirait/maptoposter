@@ -546,6 +546,7 @@ def create_poster(
     show_attribution=True,
     coord_format="dd",
     frame_style=None,
+    frame_color=None,
 ):
     """
     Generate a complete map poster with roads, water, parks, and typography.
@@ -720,6 +721,12 @@ def create_poster(
     font_main_adjusted = _fp(_f_city, "bold", adjusted_font_size)
 
     # --- BOTTOM TEXT ---
+    # Text halo: a subtle stroke in the background colour lifts labels off the map
+    # so they stay legible over any road network or colour scheme.
+    import matplotlib.patheffects as _pe  # noqa: PLC0415
+    _halo_bg = THEME.get("gradient_color") or THEME.get("bg", "#ffffff")
+    _halo = [_pe.withStroke(linewidth=4, foreground=_halo_bg)]
+
     ax.text(
         0.5,
         0.14,
@@ -729,6 +736,7 @@ def create_poster(
         ha="center",
         fontproperties=font_main_adjusted,
         zorder=11,
+        path_effects=_halo,
     )
 
     ax.text(
@@ -740,6 +748,7 @@ def create_poster(
         ha="center",
         fontproperties=font_sub,
         zorder=11,
+        path_effects=_halo,
     )
 
     lat, lon = point
@@ -755,6 +764,7 @@ def create_poster(
             ha="center",
             fontproperties=font_coords,
             zorder=11,
+            path_effects=_halo,
         )
 
     ax.plot(
@@ -783,30 +793,86 @@ def create_poster(
 
     # 4b. Optional frame overlay
     # Drawn after all map content so it sits on top (zorder 20).
-    # Frame width is expressed in physical inches so it looks uniform regardless
-    # of portrait vs. landscape orientation.
-    _FRAME_COLORS = {
-        "anthracite": "#2c2c2c",
-        "vanilla":    "#f5f0e8",
-    }
-    if frame_style and frame_style in _FRAME_COLORS:
+    # All measurements are in physical inches so proportions stay uniform across
+    # portrait and landscape orientations.
+    _FRAME_COLORS = {"anthracite": "#2c2c2c", "vanilla": "#f5f0e8"}
+
+    # Backward-compat: old combined values ("anthracite"/"vanilla") map to thick + color
+    _resolved_style = frame_style
+    _resolved_color = frame_color
+    if frame_style in _FRAME_COLORS and not frame_color:
+        _resolved_style = "thick"
+        _resolved_color = frame_style
+
+    _VALID_STYLES = {"thick", "thin", "double", "corners"}
+    if _resolved_style in _VALID_STYLES and _resolved_color in _FRAME_COLORS:
         import matplotlib.patches as _patches  # noqa: PLC0415
-        fc = _FRAME_COLORS[frame_style]
-        target_in = 0.35          # physical frame width in inches (uniform on all sides)
-        h_frac = target_in / width   # fraction of figure width
-        v_frac = target_in / height  # fraction of figure height
-        # Four edge strips: bottom, top, left, right
-        for (fx, fy, rw, rh) in [
-            (0,          0,          1,      v_frac),                    # bottom
-            (0,          1 - v_frac, 1,      v_frac),                    # top
-            (0,          v_frac,     h_frac, 1 - 2 * v_frac),            # left
-            (1 - h_frac, v_frac,     h_frac, 1 - 2 * v_frac),            # right
-        ]:
+        import matplotlib.lines   as _lines    # noqa: PLC0415
+        fc = _FRAME_COLORS[_resolved_color]
+
+        # Helpers: convert physical inches to figure-coordinate fractions
+        def _hf(inches): return inches / width
+        def _vf(inches): return inches / height
+
+        if _resolved_style == "thick":
+            # Solid filled strips — 0.35 inch wide on all sides
+            bh, bv = _hf(0.35), _vf(0.35)
+            for fx, fy, rw, rh in [
+                (0,      0,      1,  bv),
+                (0,      1 - bv, 1,  bv),
+                (0,      bv,     bh, 1 - 2 * bv),
+                (1 - bh, bv,     bh, 1 - 2 * bv),
+            ]:
+                fig.add_artist(_patches.Rectangle(
+                    (fx, fy), rw, rh,
+                    transform=fig.transFigure, clip_on=False,
+                    facecolor=fc, edgecolor="none", zorder=20,
+                ))
+
+        elif _resolved_style == "thin":
+            # Single hairline rule, inset 0.18 inches from each edge
+            ih, iv = _hf(0.18), _vf(0.18)
             fig.add_artist(_patches.Rectangle(
-                (fx, fy), rw, rh,
+                (ih, iv), 1 - 2 * ih, 1 - 2 * iv,
                 transform=fig.transFigure, clip_on=False,
-                facecolor=fc, edgecolor="none", zorder=20,
+                facecolor="none", edgecolor=fc, linewidth=1.2, zorder=20,
             ))
+
+        elif _resolved_style == "double":
+            # Two concentric hairline rules
+            for inset_in, lw in [(0.12, 0.75), (0.24, 0.75)]:
+                ih, iv = _hf(inset_in), _vf(inset_in)
+                fig.add_artist(_patches.Rectangle(
+                    (ih, iv), 1 - 2 * ih, 1 - 2 * iv,
+                    transform=fig.transFigure, clip_on=False,
+                    facecolor="none", edgecolor=fc, linewidth=lw, zorder=20,
+                ))
+
+        elif _resolved_style == "corners":
+            # L-shaped corner brackets — arm length 0.55 in, inset 0.15 in
+            arm_h, arm_v = _hf(0.55), _vf(0.55)
+            ih, iv = _hf(0.15), _vf(0.15)
+            lw = 1.5
+            segments = [
+                # top-left
+                ((ih,       1 - iv),        (ih + arm_h, 1 - iv)),
+                ((ih,       1 - iv),        (ih,         1 - iv - arm_v)),
+                # top-right
+                ((1 - ih,   1 - iv),        (1 - ih - arm_h, 1 - iv)),
+                ((1 - ih,   1 - iv),        (1 - ih,         1 - iv - arm_v)),
+                # bottom-left
+                ((ih,       iv),            (ih + arm_h, iv)),
+                ((ih,       iv),            (ih,         iv + arm_v)),
+                # bottom-right
+                ((1 - ih,   iv),            (1 - ih - arm_h, iv)),
+                ((1 - ih,   iv),            (1 - ih,         iv + arm_v)),
+            ]
+            for (x0, y0), (x1, y1) in segments:
+                fig.add_artist(_lines.Line2D(
+                    [x0, x1], [y0, y1],
+                    transform=fig.transFigure, clip_on=False,
+                    color=fc, linewidth=lw, solid_capstyle="butt", zorder=20,
+                ))
 
     # 5. Save
     print(f"Saving to {output_file}...")
